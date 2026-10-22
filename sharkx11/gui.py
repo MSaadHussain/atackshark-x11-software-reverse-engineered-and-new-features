@@ -224,7 +224,10 @@ class App(tk.Tk):
                 row=i // 3, column=(i % 3) * 2 + 1, sticky="w")
             self.hl_vals[k] = v
         self.hl_auto = tk.BooleanVar(value=True)
-        ttk.Checkbutton(f, text="Auto-fix: re-send mouse settings when stutter or a dropout is detected",
+        self.hl_diag = tk.StringVar(value="Diagnosis appears once events are recorded.")
+        ttk.Label(f, textvariable=self.hl_diag, wraplength=700, foreground="#a33").pack(anchor="w", pady=(6, 0))
+        ttk.Checkbutton(f, text="Auto-fix: re-send mouse settings after the mouse wakes up / reconnects "
+                                "(waits until the mouse is still)",
                         variable=self.hl_auto,
                         command=lambda: setattr(self.watchdog, "auto_fix", self.hl_auto.get())).pack(anchor="w", pady=6)
 
@@ -255,6 +258,7 @@ class App(tk.Tk):
 
     def _health_summary(self):
         s = self.watchdog.summary()
+        self.hl_diag.set("\n".join(self.watchdog.diagnose()))
         for k, v in self.hl_vals.items():
             v.set("—" if s[k] is None else (f"{s[k]}/s" if k == "report_rate" else str(s[k])))
 

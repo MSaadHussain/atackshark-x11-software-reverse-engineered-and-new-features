@@ -44,5 +44,17 @@ class Health(unittest.TestCase):
         self.assertEqual([e.kind for e in events], ["link_lost", "link_back"])
 
 
+    def test_no_resend_during_stutter_or_short_dropout(self):
+        calls = []
+        w = H.Watchdog(reapply=lambda: calls.append(1) or True, auto_fix=True)
+        for k in range(5):
+            w._motion_event(H.Event(1000 + k, "freeze", "x"))
+        w.status_seen(1000)
+        w.tick(1007)
+        w.status_seen(1013)          # 13 s radio dropout, like the user's log
+        self.assertEqual(calls, [])
+        self.assertTrue(any("radio" in line for line in w.diagnose(window=10 ** 10)))
+
+
 if __name__ == "__main__":
     unittest.main()

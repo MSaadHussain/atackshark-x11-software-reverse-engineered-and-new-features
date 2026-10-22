@@ -263,7 +263,28 @@ def run_checks(cfg=None, battery_pct=None, report_rate=None, link_ok=None) -> li
                             + ("" if good else ": interference likely, move the dongle closer / use a USB extension")))
     if link_ok is not None:
         checks.append(Check("link", "Wireless link", link_ok, "stable" if link_ok else "dropouts seen recently"))
+    near = hub_neighbours()
+    checks.append(Check("hub", "Devices next to the dongle", not near,
+                        "none" if not near else "same USB hub: " + "; ".join(near)
+                        + " - move the dongle to a separate port/extension cable"))
     return checks
+
+
+def hub_neighbours() -> list[str]:
+    """Other USB devices on the same hub as the dongle (possible 2.4 GHz neighbours)."""
+    ps = (f"$d = Get-PnpDevice -PresentOnly | Where-Object {{ $_.InstanceId -like 'USB\\{DEV_KEY}\\*' }} | "
+          "Select-Object -First 1; if (-not $d) { exit }; "
+          "$hub = (Get-PnpDeviceProperty -InstanceId $d.InstanceId DEVPKEY_Device_Parent).Data; "
+          "Get-PnpDevice -PresentOnly | Where-Object { $_.InstanceId -match '^USB\\\\VID_[0-9A-F]{4}&PID_[0-9A-F]{4}\\\\' "
+          "-and $_.InstanceId -ne $d.InstanceId } | ForEach-Object { "
+          "if ((Get-PnpDeviceProperty -InstanceId $_.InstanceId DEVPKEY_Device_Parent).Data -eq $hub) { "
+          "$_.InstanceId.Split('\\')[1] + ' ' + $_.FriendlyName } }")
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True,
+                             timeout=30, creationflags=0x08000000).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    return [line.strip() for line in out.splitlines() if line.strip()]
 
 
 FIX_SCRIPT = rf"""
@@ -326,18 +347,19 @@ class Watchdog:
             self.on_event(e)
 
     def _motion_event(self, e: Event):
+        # No action here on purpose: re-sending settings over a struggling radio
+        # link was measured to cause ~500 ms freezes of its own.
         self._emit(e)
-        recent = [x for x in self.events if x.kind in ("hitch", "freeze") and x.t > e.t - 60]
-        if e.kind == "freeze" or len(recent) >= 3:
-            self._auto_fix("stutter detected")
 
     def status_seen(self, t=None):
         """Call whenever a dongle status (battery) report arrives."""
         t = t or time.time()
         if self.link_down_since:
             self._emit(Event(t, "link_back", f"wireless link back after {t - self.link_down_since:.0f} s"))
+            down = t - self.link_down_since
             self.link_down_since = None
-            self._auto_fix("link restored")
+            if down >= 30:   # mouse slept or was switched off, not a radio blip
+                self._auto_fix("mouse reconnected")
         self.last_status = t
 
     def tick(self, t=None):
@@ -354,11 +376,38 @@ class Watchdog:
         threading.Thread(target=self._do_reapply, args=(why,), daemon=True).start()
 
     def _do_reapply(self, why):
+        # Wait until the mouse has been still for 3 s so the packets can't interrupt movement.
+        end = time.time() + 120
+        while time.time() < end and self.an.prev and time.time() - self.an.prev[0] < 3:
+            time.sleep(0.5)
         try:
             ok = self.reapply()
         except Exception as e:  # device busy/unplugged: report, don't crash the watcher
             ok, why = False, f"{why}: {e}"
         self._emit(Event(time.time(), "fix", f"{why} → re-sent mouse settings ({'ok' if ok else 'failed'})"))
+
+    def diagnose(self, window=3600) -> list[str]:
+        """Plain-language reading of the recent events."""
+        now = time.time()
+        ev = [e for e in self.events if e.t > now - window]
+        stutter = [e for e in ev if e.kind in ("hitch", "freeze")]
+        drops = [e for e in ev if e.kind == "link_lost"]
+        if not stutter and not drops:
+            return ["No problems seen in the last hour."]
+        out = []
+        if drops:
+            near = [e for e in stutter if any(d.t - 30 <= e.t <= d.t + 30 for d in drops)]
+            out.append(f"{len(drops)} wireless dropout(s); {len(near)} of {len(stutter)} stutters happened "
+                       "around them. Stutter together with lost status reports means the 2.4 GHz radio "
+                       "link is losing packets (interference or distance), not a Windows problem.")
+        if len(stutter) >= 5:
+            out.append(f"{len(stutter)} stutters in the last hour. What helps most: put the dongle on the "
+                       "desk 20-30 cm from the mouse with a USB extension cable, away from other wireless "
+                       "dongles, USB 3 devices and the PC case.")
+        rate = self.an.report_rate()
+        if rate and rate < 600:
+            out.append(f"Only {rate} reports/s during fast movement (expected ~1000): packets are being dropped.")
+        return out
 
     def summary(self, window=3600):
         now = time.time()
