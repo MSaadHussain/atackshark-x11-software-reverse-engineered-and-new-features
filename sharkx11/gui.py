@@ -550,8 +550,10 @@ class App(tk.Tk):
         bind = ttk.Frame(right)
         bind.pack(fill="x")
         ttk.Label(bind, text="Send this hotkey from").pack(side="left")
-        self.mv_slot = tk.StringVar(value=list(SLOT_LABELS)[4])
-        ttk.Combobox(bind, textvariable=self.mv_slot, values=list(SLOT_LABELS), state="readonly", width=30).pack(side="left", padx=4)
+        # Never offer the left button: binding it to a hotkey would take away left click.
+        bindable = [k for k, s in SLOT_LABELS.items() if s != 0]
+        self.mv_slot = tk.StringVar(value=bindable[3])
+        ttk.Combobox(bind, textvariable=self.mv_slot, values=bindable, state="readonly", width=30).pack(side="left", padx=4)
         ttk.Button(bind, text="Bind", command=self._bind_hotkey).pack(side="left")
         self.listen_var = tk.BooleanVar()
         ttk.Checkbutton(right, text="Run movement macros", variable=self.listen_var,
@@ -804,6 +806,10 @@ class App(tk.Tk):
             reports = P.build_all(self.cfg)
         except ValueError as e:
             return messagebox.showerror("Settings", str(e), parent=self)
+        if self.cfg.buttons[0].code != P.FUNCTIONS["Left click"] and not messagebox.askyesno(
+                "Left button", "The left button will no longer left-click. Apply anyway?",
+                icon="warning", default="no", parent=self):
+            return
         self._save_profile(PROFILE)
         self._run_send(reports, "Applied")
 
