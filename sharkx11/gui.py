@@ -34,6 +34,7 @@ START = {"Side button (front)": ("button", 6), "Side button (back)": ("button", 
          "DPI button": ("button", 5), "Wheel click": ("button", 2),
          "Hold left click": ("hold", "hold_left"), "Hold right click": ("hold", "hold_right"),
          MANUAL: ("none", None)}
+HOLD_TIMES = {"0.1 s": 100, "0.2 s (default)": 200, "0.3 s": 300, "0.5 s": 500, "1 s": 1000}
 REPEAT = {"Once": 1, "2 times": 2, "3 times": 3, "5 times": 5, "10 times": 10, "Loop until stopped": 0}
 SLOT_LABELS = {f"{lbl} (slot {s})": s for s, lbl in P.X11_SLOTS.items()}
 
@@ -547,7 +548,13 @@ class App(tk.Tk):
                                              ("2. Starts with", start_cb), ("3. Plays", repeat_cb))):
             ttk.Label(form, text=label, font=("Segoe UI", 10, "bold")).grid(row=r, column=0, sticky="w", pady=3)
             widget.grid(row=r, column=1, sticky="w", padx=8)
-        for cb in (start_cb, repeat_cb):
+        self.mv_hold = tk.StringVar(value="0.2 s (default)")
+        self.mv_hold_lbl = ttk.Label(form, text="    Start after holding", font=("Segoe UI", 10))
+        self.mv_hold_cb = ttk.Combobox(form, textvariable=self.mv_hold, values=list(HOLD_TIMES),
+                                       state="readonly", width=26)
+        self.mv_hold_lbl.grid(row=3, column=0, sticky="w", pady=3)
+        self.mv_hold_cb.grid(row=3, column=1, sticky="w", padx=8)
+        for cb in (start_cb, repeat_cb, self.mv_hold_cb):
             cb.bind("<<ComboboxSelected>>", lambda e: self._explain_move())
 
         ttk.Label(right, text="4. Pattern", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(8, 0))
@@ -603,10 +610,13 @@ class App(tk.Tk):
     def _explain_move(self):
         kind, what = START[self.mv_start.get()]
         rep = REPEAT[self.mv_repeat.get()]
-        if kind == "hold":
+        hold = kind == "hold"
+        for w in (self.mv_hold_lbl, self.mv_hold_cb):
+            w.grid() if hold else w.grid_remove()
+        if hold:
             btn = what.split("_")[1]
-            how = (f"Hold {btn} click: the pattern plays while you hold it and stops when you let go. "
-                   f"The click itself still works normally.")
+            how = (f"A normal {btn} click stays a normal click. Keep it held for {self.mv_hold.get().split(' (')[0]} "
+                   f"and the pattern starts; it stops when you let go.")
         elif kind == "button":
             old = CODE_TO_NAME.get(P._default_buttons()[what].code, "its normal function")
             how = (f"Press the {P.X11_SLOTS[what].lower()} to play, press it again to stop. "
@@ -671,6 +681,7 @@ class App(tk.Tk):
         self.mv_name.set(n)
         self.mv_start.set(self._start_of(m))
         self.mv_repeat.set(next((k for k, v in REPEAT.items() if v == m.get("repeat", 1)), next(iter(REPEAT))))
+        self.mv_hold.set(next((k for k, v in HOLD_TIMES.items() if v == m.get("hold_ms", 200)), "0.2 s (default)"))
         self._set_steps(m.get("steps", []))
         self._explain_move()
 
@@ -683,6 +694,7 @@ class App(tk.Tk):
         self.mv_name.set(f"Macro {n}")
         self.mv_start.set(next((k for k in START if k not in used), MANUAL))
         self.mv_repeat.set(next(iter(REPEAT)))
+        self.mv_hold.set("0.2 s (default)")
         self._set_steps([])
         self._explain_move()
         self.status.set("New macro: pick how it starts, press ● Record, then Save")
@@ -764,7 +776,7 @@ class App(tk.Tk):
         kind, what = START[start]
         m = {"repeat": REPEAT[self.mv_repeat.get()], "steps": steps}
         if kind == "hold":
-            m.update(trigger=what, hotkey="", button=None)
+            m.update(trigger=what, hotkey="", button=None, hold_ms=HOLD_TIMES[self.mv_hold.get()])
         else:
             m.update(trigger="hotkey", hotkey=self._free_hotkey(prev.get("hotkey")),
                      button=what if kind == "button" else None)

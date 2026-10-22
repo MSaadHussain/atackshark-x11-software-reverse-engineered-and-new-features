@@ -230,6 +230,7 @@ _LL_BUTTONS = {0x0201: ("left", True), 0x0202: ("left", False), 0x0204: ("right"
                0x0205: ("right", False), 0x0207: ("middle", True), 0x0208: ("middle", False)}
 HOLD_TRIGGERS = {"hold_left": "left", "hold_right": "right", "hold_middle": "middle",
                  "hold_x1": "x1", "hold_x2": "x2"}
+DEFAULT_HOLD_MS = 200    # how long a button must stay down before a hold macro starts
 
 
 class Listener(threading.Thread):
@@ -254,6 +255,8 @@ class Listener(threading.Thread):
         self.armed = armed
         self._tid = None
         self._running: dict[str, Player] = {}
+        self._pending: dict[str, threading.Timer] = {}
+        self._lock = threading.Lock()
         self._hook = None
         self._proc = _HOOKPROC(self._mouse_proc)   # keep a reference for the hook's lifetime
 
@@ -295,11 +298,32 @@ class Listener(threading.Thread):
                     ev = ("x1" if (info.mouseData >> 16) == 1 else "x2", wparam == 0x020B)
                 if ev and ev[0] in self.holds:
                     btn, pressed = ev
+                    key = f"hold:{btn}"
                     if pressed:
-                        self._start(f"hold:{btn}", self.holds[btn])
-                    elif f"hold:{btn}" in self._running:
-                        self._running.pop(f"hold:{btn}").stop()
+                        # Start only once the button has stayed down for hold_ms, so a
+                        # normal click never triggers the pattern.
+                        macro = self.holds[btn]
+                        timer = threading.Timer(macro.get("hold_ms", DEFAULT_HOLD_MS) / 1000,
+                                                self._hold_reached, (key, macro))
+                        with self._lock:
+                            self._pending[key] = timer
+                        timer.start()
+                    else:
+                        with self._lock:
+                            timer = self._pending.pop(key, None)
+                            player = self._running.pop(key, None)
+                        if timer:
+                            timer.cancel()
+                        if player:
+                            player.stop()
         return user32.CallNextHookEx(None, code, wparam, lparam)
+
+    def _hold_reached(self, key, macro):
+        # Still held? (release removes the pending entry under the same lock)
+        with self._lock:
+            if self._pending.pop(key, None) is None:
+                return
+            self._start(key, macro)
 
     def _toggle(self, key, macro):
         if key in self._running:
@@ -322,6 +346,8 @@ class Listener(threading.Thread):
         threading.Thread(target=go, daemon=True).start()
 
     def stop(self):
+        for t in list(self._pending.values()):
+            t.cancel()
         for p in list(self._running.values()):
             p.stop()
         if self._tid:

@@ -80,7 +80,8 @@ class RAWINPUTHEADER(ctypes.Structure):
 
 
 class RAWMOUSE(ctypes.Structure):
-    _fields_ = [("usFlags", wintypes.USHORT), ("usButtonFlags", wintypes.USHORT),
+    # usButtonFlags/usButtonData live in a 4-byte-aligned union, hence the padding.
+    _fields_ = [("usFlags", wintypes.USHORT), ("_pad", wintypes.USHORT), ("usButtonFlags", wintypes.USHORT),
                 ("usButtonData", wintypes.USHORT), ("ulRawButtons", wintypes.ULONG),
                 ("lLastX", wintypes.LONG), ("lLastY", wintypes.LONG), ("ulExtraInformation", wintypes.ULONG)]
 
