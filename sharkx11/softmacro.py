@@ -152,8 +152,13 @@ class Player:
         raise ValueError(f"unknown step {s!r}")
 
     def play(self, steps, repeat: int = 1):
+        """Play `repeat` times; repeat <= 0 loops until stop() is called."""
         self._stop.clear()
-        for _ in range(max(1, repeat)):
+        n = 0
+        while repeat <= 0 or n < repeat:
+            n += 1
+            if not steps:
+                return True
             for s in steps:
                 if self._stop.is_set() or not self.step(s):
                     return False

@@ -21,14 +21,20 @@ MOVES = os.path.join(HERE, "profiles", "movement.json")
 BATTERY_LOG = os.path.join(HERE, "profiles", "battery_log.csv")
 BATTERY_CFG = os.path.join(HERE, "profiles", "battery.json")
 HEALTH_LOG = os.path.join(HERE, "profiles", "health_log.csv")
+APP_CFG = os.path.join(HERE, "profiles", "app.json")
 
 SHORTCUT_LABEL, MACRO_LABEL = "Keyboard shortcut…", "Firmware macro"
 FUNC_NAMES = list(P.FUNCTIONS) + [SHORTCUT_LABEL, MACRO_LABEL]
 CODE_TO_NAME = {v: k for k, v in P.FUNCTIONS.items()}
 HOTKEYS = [f"F{i}" for i in range(13, 25)]
-TRIGGERS = {"Hotkey (F13-F24)": "hotkey", "Hold left click": "hold_left", "Hold right click": "hold_right",
-            "Hold wheel click": "hold_middle", "Hold side front": "hold_x2", "Hold side back": "hold_x1"}
-TRIGGER_NAMES = {v: k for k, v in TRIGGERS.items()}
+MANUAL = "Only the ▶ Test button"
+# How a movement macro starts: ("button", slot) uses a free F13-F24 key sent by that button,
+# ("hold", trigger) plays while a click is held. The left button is never remapped.
+START = {"Side button (front)": ("button", 6), "Side button (back)": ("button", 7),
+         "DPI button": ("button", 5), "Wheel click": ("button", 2),
+         "Hold left click": ("hold", "hold_left"), "Hold right click": ("hold", "hold_right"),
+         MANUAL: ("none", None)}
+REPEAT = {"Once": 1, "2 times": 2, "3 times": 3, "5 times": 5, "10 times": 10, "Loop until stopped": 0}
 SLOT_LABELS = {f"{lbl} (slot {s})": s for s, lbl in P.X11_SLOTS.items()}
 
 
@@ -52,8 +58,8 @@ class App(tk.Tk):
         nb.pack(fill="both", expand=True, padx=8, pady=(8, 0))
         for title, build in (("Battery", self._tab_battery), ("DPI", self._tab_dpi), ("Buttons", self._tab_buttons),
                              ("Performance & light", self._tab_perf),
-                             ("Firmware macros", self._tab_macros),
-                             ("Movement macros", self._tab_moves), ("Health", self._tab_health)):
+                             ("Key macros (on mouse)", self._tab_macros),
+                             ("Macros", self._tab_moves), ("Health", self._tab_health)):
             f = ttk.Frame(nb, padding=10)
             nb.add(f, text=title)
             build(f)
@@ -512,65 +518,146 @@ class App(tk.Tk):
         return "break"
 
     def _tab_moves(self, f):
+        top = ttk.Frame(f)
+        top.pack(fill="x", pady=(0, 8))
+        self.macros_on = tk.BooleanVar(value=self._app_setting("macros_on", False))
+        ttk.Checkbutton(top, text="Macros ON", variable=self.macros_on, style="Big.TCheckbutton",
+                        command=self._macros_switch).pack(side="left")
+        ttk.Style(self).configure("Big.TCheckbutton", font=("Segoe UI", 11, "bold"))
+        ttk.Label(top, text="Scroll Lock = quick pause for 'hold' macros", foreground="gray").pack(side="left", padx=12)
+
         left = ttk.Frame(f)
         left.pack(side="left", fill="y")
-        self.mv_list = tk.Listbox(left, width=22, exportselection=False)
+        self.mv_list = tk.Listbox(left, width=24, exportselection=False, font=("Segoe UI", 10))
         self.mv_list.pack(fill="y", expand=True)
         self.mv_list.bind("<<ListboxSelect>>", lambda e: self._show_move())
-        ttk.Button(left, text="New", command=self._new_move).pack(fill="x", pady=(6, 0))
+        ttk.Button(left, text="+ New macro", command=self._new_move).pack(fill="x", pady=(6, 0))
         ttk.Button(left, text="Delete", command=self._del_move).pack(fill="x")
 
         right = ttk.Frame(f)
-        right.pack(side="left", fill="both", expand=True, padx=(10, 0))
-        row = ttk.Frame(right)
-        row.pack(fill="x")
+        right.pack(side="left", fill="both", expand=True, padx=(12, 0))
+        form = ttk.Frame(right)
+        form.pack(fill="x")
         self.mv_name = tk.StringVar()
-        self.mv_hotkey = tk.StringVar()
-        self.mv_repeat = tk.IntVar(value=1)
-        ttk.Label(row, text="Name").pack(side="left")
-        ttk.Entry(row, textvariable=self.mv_name, width=16).pack(side="left", padx=4)
-        self.mv_trigger = tk.StringVar(value=next(iter(TRIGGERS)))
-        ttk.Label(row, text="Trigger").pack(side="left")
-        ttk.Combobox(row, textvariable=self.mv_trigger, values=list(TRIGGERS), width=16, state="readonly").pack(side="left", padx=4)
-        ttk.Label(row, text="Hotkey").pack(side="left")
-        ttk.Combobox(row, textvariable=self.mv_hotkey, values=[""] + HOTKEYS, width=5, state="readonly").pack(side="left", padx=4)
-        ttk.Label(row, text="Repeat").pack(side="left")
-        ttk.Spinbox(row, from_=1, to=9999, textvariable=self.mv_repeat, width=5).pack(side="left", padx=4)
-        ttk.Label(right, text='Steps, one JSON object per line: {"move":[dx,dy],"ms":200}  {"click":"left"}  '
-                              '{"move_to":[x,y]}  {"scroll":-3}  {"key":"F5"}  {"wait":50}',
-                  foreground="gray", wraplength=520).pack(anchor="w", pady=4)
-        self.mv_text = tk.Text(right, height=14, font=("Consolas", 10))
-        self.mv_text.pack(fill="both", expand=True)
-        btns = ttk.Frame(right)
-        btns.pack(fill="x", pady=6)
-        ttk.Button(btns, text="Save", command=self._save_move).pack(side="left")
-        ttk.Button(btns, text="● Record mouse (Esc stops)", command=self._record_move).pack(side="left", padx=4)
-        ttk.Button(btns, text="● Record while holding", command=self._record_hold).pack(side="left")
-        ttk.Button(btns, text="▶ Test in 2 s", command=self._test_move).pack(side="left", padx=4)
-        bind = ttk.Frame(right)
-        bind.pack(fill="x")
-        ttk.Label(bind, text="Send this hotkey from").pack(side="left")
-        # Never offer the left button: binding it to a hotkey would take away left click.
-        bindable = [k for k, s in SLOT_LABELS.items() if s != 0]
-        self.mv_slot = tk.StringVar(value=bindable[3])
-        ttk.Combobox(bind, textvariable=self.mv_slot, values=bindable, state="readonly", width=30).pack(side="left", padx=4)
-        ttk.Button(bind, text="Bind", command=self._bind_hotkey).pack(side="left")
-        self.listen_var = tk.BooleanVar()
-        ttk.Checkbutton(right, text="Run movement macros", variable=self.listen_var,
-                        command=self._toggle_listener).pack(anchor="w", pady=(8, 0))
-        ttk.Label(right, text="Hold macros play while the button is held and stop on release. They only fire "
-                              "while ARMED: press Scroll Lock to arm/disarm, so normal clicks stay normal.",
-                  foreground="gray", wraplength=520).pack(anchor="w")
-        self._fill_moves()
+        self.mv_start = tk.StringVar(value=next(iter(START)))
+        self.mv_repeat = tk.StringVar(value=next(iter(REPEAT)))
+        start_cb = ttk.Combobox(form, textvariable=self.mv_start, values=list(START), state="readonly", width=26)
+        repeat_cb = ttk.Combobox(form, textvariable=self.mv_repeat, values=list(REPEAT), state="readonly", width=26)
+        for r, (label, widget) in enumerate((("1. Name", ttk.Entry(form, textvariable=self.mv_name, width=28)),
+                                             ("2. Starts with", start_cb), ("3. Plays", repeat_cb))):
+            ttk.Label(form, text=label, font=("Segoe UI", 10, "bold")).grid(row=r, column=0, sticky="w", pady=3)
+            widget.grid(row=r, column=1, sticky="w", padx=8)
+        for cb in (start_cb, repeat_cb):
+            cb.bind("<<ComboboxSelected>>", lambda e: self._explain_move())
 
+        ttk.Label(right, text="4. Pattern", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(8, 0))
+        rec = ttk.Frame(right)
+        rec.pack(fill="x", pady=2)
+        ttk.Button(rec, text="● Record", command=self._record_any).pack(side="left")
+        ttk.Button(rec, text="▶ Test (in 2 s)", command=self._test_move).pack(side="left", padx=6)
+        self.mv_info = tk.StringVar(value="No pattern yet")
+        ttk.Label(rec, textvariable=self.mv_info).pack(side="left", padx=6)
+        self.mv_adv = tk.BooleanVar(value=False)
+        ttk.Checkbutton(rec, text="Edit steps", variable=self.mv_adv, command=self._toggle_steps).pack(side="right")
+        self.mv_steps_box = ttk.Frame(right)       # holds the step editor when "Edit steps" is on
+        self.mv_steps_box.pack(fill="both", expand=True)
+        self.mv_text = tk.Text(self.mv_steps_box, height=8, font=("Consolas", 9))
+        self.mv_steps: list = []
+
+        self.mv_help = tk.StringVar()
+        ttk.Label(right, textvariable=self.mv_help, wraplength=480, foreground="#2b5797").pack(anchor="w", pady=8)
+        ttk.Button(right, text="💾 Save macro", command=self._save_move).pack(anchor="w")
+        self._fill_moves(next(iter(self.moves), None))
+        if self.macros_on.get():
+            self.after(500, self._toggle_listener)
+
+    # --- helpers
+    def _app_setting(self, key, default=None):
+        try:
+            with open(APP_CFG, encoding="utf-8") as fh:
+                return json.load(fh).get(key, default)
+        except (OSError, ValueError):
+            return default
+
+    def _set_app_setting(self, key, value):
+        try:
+            with open(APP_CFG, encoding="utf-8") as fh:
+                d = json.load(fh)
+        except (OSError, ValueError):
+            d = {}
+        d[key] = value
+        with open(APP_CFG, "w", encoding="utf-8") as fh:
+            json.dump(d, fh)
+
+    def _start_of(self, m) -> str:
+        """Which START option describes a stored macro."""
+        trig = m.get("trigger", "hotkey")
+        if trig in softmacro.HOLD_TRIGGERS:
+            return next(k for k, v in START.items() if v == ("hold", trig))
+        slot = m.get("button")
+        if slot is None and m.get("hotkey"):   # macros saved by older versions
+            usage = HID_KEYS.get(m["hotkey"])
+            slot = next((s for s, b in enumerate(self.cfg.buttons) if b.code == P.SHORTCUT and b.key == usage), None)
+        return next((k for k, v in START.items() if v == ("button", slot)), MANUAL)
+
+    def _explain_move(self):
+        kind, what = START[self.mv_start.get()]
+        rep = REPEAT[self.mv_repeat.get()]
+        if kind == "hold":
+            btn = what.split("_")[1]
+            how = (f"Hold {btn} click: the pattern plays while you hold it and stops when you let go. "
+                   f"The click itself still works normally.")
+        elif kind == "button":
+            old = CODE_TO_NAME.get(P._default_buttons()[what].code, "its normal function")
+            how = (f"Press the {P.X11_SLOTS[what].lower()} to play, press it again to stop. "
+                   f"Saving sets this up on the mouse; the button stops doing '{old}' until you delete the macro.")
+        else:
+            how = "Not linked to a button. Use ▶ Test to play it."
+        if rep == 0 and kind != "hold":
+            how += " It loops until you press the button again."
+        self.mv_help.set(how + ("" if self.macros_on.get() else "  (Turn on 'Macros ON' at the top.)"))
+
+    def _set_steps(self, steps):
+        self.mv_steps = steps
+        ms = sum(s.get("ms", 0) + s.get("wait", 0) for s in steps)
+        self.mv_info.set(f"{len(steps)} steps · {ms / 1000:.1f} s" if steps else "No pattern yet")
+        self.mv_text.delete("1.0", "end")
+        self.mv_text.insert("1.0", "\n".join(json.dumps(s) for s in steps))
+
+    def _steps_now(self):
+        return self._parse_text() if self.mv_adv.get() else self.mv_steps
+
+    def _parse_text(self):
+        steps = []
+        for ln, line in enumerate(self.mv_text.get("1.0", "end").splitlines(), start=1):
+            if line.strip():
+                try:
+                    steps.append(json.loads(line))
+                except json.JSONDecodeError as e:
+                    raise ValueError(f"Step line {ln}: {e.msg}") from None
+        return steps
+
+    def _toggle_steps(self):
+        if self.mv_adv.get():
+            self.mv_text.pack(fill="both", expand=True)
+            return
+        try:
+            self._set_steps(self._parse_text())
+        except ValueError as e:
+            self.mv_adv.set(True)
+            return messagebox.showerror("Steps", str(e), parent=self)
+        self.mv_text.pack_forget()
+
+    # --- list
     def _fill_moves(self, select=None):
         self.mv_list.delete(0, "end")
         for n in self.moves:
-            self.mv_list.insert("end", n)
+            self.mv_list.insert("end", f"{n}   ·   {self._start_of(self.moves[n])}")
         if select in self.moves:
-            i = list(self.moves).index(select)
-            self.mv_list.selection_set(i)
+            self.mv_list.selection_set(list(self.moves).index(select))
             self._show_move()
+        else:
+            self._explain_move()
 
     def _sel_move(self):
         s = self.mv_list.curselection()
@@ -582,111 +669,144 @@ class App(tk.Tk):
             return
         m = self.moves[n]
         self.mv_name.set(n)
-        self.mv_hotkey.set(m.get("hotkey", ""))
-        self.mv_trigger.set(TRIGGER_NAMES.get(m.get("trigger", "hotkey"), next(iter(TRIGGERS))))
-        self.mv_repeat.set(m.get("repeat", 1))
-        self.mv_text.delete("1.0", "end")
-        self.mv_text.insert("1.0", "\n".join(json.dumps(s) for s in m.get("steps", [])))
+        self.mv_start.set(self._start_of(m))
+        self.mv_repeat.set(next((k for k, v in REPEAT.items() if v == m.get("repeat", 1)), next(iter(REPEAT))))
+        self._set_steps(m.get("steps", []))
+        self._explain_move()
 
     def _new_move(self):
-        n = f"Macro {len(self.moves) + 1}"
-        self.moves[n] = {"hotkey": "", "repeat": 1, "steps": [{"move": [200, 0], "ms": 300}, {"click": "left"}]}
-        self._fill_moves(n)
+        self.mv_list.selection_clear(0, "end")
+        n = 1
+        while f"Macro {n}" in self.moves:
+            n += 1
+        used = {self._start_of(m) for m in self.moves.values()}
+        self.mv_name.set(f"Macro {n}")
+        self.mv_start.set(next((k for k in START if k not in used), MANUAL))
+        self.mv_repeat.set(next(iter(REPEAT)))
+        self._set_steps([])
+        self._explain_move()
+        self.status.set("New macro: pick how it starts, press ● Record, then Save")
 
     def _del_move(self):
         n = self._sel_move()
-        if n:
-            del self.moves[n]
-            self._write_moves()
-            self._fill_moves()
-
-    def _parse_steps(self):
-        steps = []
-        for ln, line in enumerate(self.mv_text.get("1.0", "end").splitlines(), start=1):
-            if line.strip():
-                try:
-                    steps.append(json.loads(line))
-                except json.JSONDecodeError as e:
-                    raise ValueError(f"line {ln}: {e.msg}") from None
-        return steps
-
-    def _save_move(self):
-        old = self._sel_move()
-        try:
-            steps = self._parse_steps()
-        except ValueError as e:
-            return messagebox.showerror("Steps", str(e), parent=self)
-        n = self.mv_name.get().strip() or "Macro"
-        if old and old != n:
-            del self.moves[old]
-        trig = TRIGGERS[self.mv_trigger.get()]
-        if trig == "hotkey" and not self.mv_hotkey.get():
-            return messagebox.showerror("Trigger", "Pick a hotkey (F13-F24) or a hold trigger", parent=self)
-        taken = [k for k, m in self.moves.items() if k != old and trig != "hotkey" and m.get("trigger") == trig]
-        if taken:
-            return messagebox.showerror("Trigger", f"'{taken[0]}' already uses this trigger", parent=self)
-        self.moves[n] = {"trigger": trig, "hotkey": self.mv_hotkey.get() if trig == "hotkey" else "",
-                         "repeat": self.mv_repeat.get(), "steps": steps}
+        if not n or not messagebox.askyesno("Delete", f"Delete macro '{n}'?", parent=self):
+            return
+        m = self.moves.pop(n)
         self._write_moves()
-        self._fill_moves(n)
-        self.status.set(f"Saved movement macro '{n}'")
-        if self.listener:
-            self._toggle_listener(restart=True)
+        self._release_button(m)
+        self._fill_moves()
+        self._restart_listener()
 
-    def _record_move(self):
-        self.status.set("Recording starts in 2 s… move the mouse, press Esc to stop")
-        self.update()
-
-        def go():
-            time.sleep(2)
-            steps = softmacro.record(seconds=60)
-            self._post(lambda: (self.mv_text.delete("1.0", "end"),
-                                   self.mv_text.insert("1.0", "\n".join(json.dumps(s) for s in steps)),
-                                   self.status.set(f"Recorded {len(steps)} steps - press Save to keep")))
-        threading.Thread(target=go, daemon=True).start()
-
-    def _record_hold(self):
-        btn = softmacro.HOLD_TRIGGERS.get(TRIGGERS[self.mv_trigger.get()], "left")
-        self.status.set(f"Hold the {btn} button and draw the pattern (15 s to start)…")
+    # --- recording / testing
+    def _record_any(self):
+        kind, what = START[self.mv_start.get()]
+        if kind == "hold":
+            btn = softmacro.HOLD_TRIGGERS[what]
+            self.status.set(f"Recording: hold the {btn} button and draw your pattern, then let go…")
+            fn = lambda: softmacro.record_hold(btn)  # noqa: E731
+        else:
+            self.status.set("Recording starts in 3 s: move/click as you want it played, press Esc to finish…")
+            fn = lambda: (time.sleep(3), softmacro.record(seconds=120))[1]  # noqa: E731
 
         def go():
-            steps = softmacro.record_hold(btn)
-            self._post(lambda: (self.mv_text.delete("1.0", "end"),
-                                self.mv_text.insert("1.0", "\n".join(json.dumps(s) for s in steps)),
-                                self.status.set(f"Recorded {len(steps)} steps - press Save to keep"
-                                                if steps else "Nothing recorded")))
+            steps = fn()
+            self._post(self._set_steps, steps)
+            self._post(self.status.set, f"Recorded {len(steps)} steps - press Save macro"
+                       if steps else "Nothing recorded, try again")
         threading.Thread(target=go, daemon=True).start()
 
     def _test_move(self):
         try:
-            steps = self._parse_steps()
+            steps = self._steps_now()
         except ValueError as e:
             return messagebox.showerror("Steps", str(e), parent=self)
+        if not steps:
+            return self.status.set("Record a pattern first")
+        rep = REPEAT[self.mv_repeat.get()] or 1   # test never loops forever
         self.status.set("Playing in 2 s…")
-        threading.Thread(target=lambda: (time.sleep(2), softmacro.play(steps, self.mv_repeat.get()),
-                                         self._post(lambda: self.status.set("Played"))), daemon=True).start()
+        threading.Thread(target=lambda: (time.sleep(2), softmacro.play(steps, rep),
+                                         self._post(self.status.set, "Test finished")), daemon=True).start()
 
-    def _bind_hotkey(self):
-        hk = self.mv_hotkey.get()
-        if not hk:
-            return messagebox.showinfo("Hotkey", "Pick a hotkey (F13-F24) for this macro first", parent=self)
-        slot = SLOT_LABELS[self.mv_slot.get()]
-        self.cfg.buttons[slot] = P.Button(P.SHORTCUT, 0, HID_KEYS[hk])
-        self._refresh()
-        self.status.set(f"{P.X11_SLOTS[slot]} now sends {hk} - press Apply to mouse")
+    # --- saving / button linking
+    def _free_hotkey(self, keep=None):
+        used = {m.get("hotkey") for m in self.moves.values()}
+        if keep and keep not in used:
+            return keep
+        return next(h for h in HOTKEYS if h not in used)
 
-    def _toggle_listener(self, restart=False):
+    def _release_button(self, m):
+        """Give a button back its factory function when its macro goes away."""
+        slot = m.get("button")
+        if slot is not None and self.cfg.buttons[slot].code == P.SHORTCUT:
+            self.cfg.buttons[slot] = P._default_buttons()[slot]
+            self._refresh()
+            self.apply()
+
+    def _save_move(self):
+        old = self._sel_move()
+        name = self.mv_name.get().strip()
+        try:
+            steps = self._steps_now()
+        except ValueError as e:
+            return messagebox.showerror("Steps", str(e), parent=self)
+        if not name:
+            return messagebox.showerror("Macro", "Give the macro a name", parent=self)
+        if not steps:
+            return messagebox.showerror("Macro", "Record a pattern first (● Record)", parent=self)
+        if name != old and name in self.moves:
+            return messagebox.showerror("Macro", f"A macro called '{name}' already exists", parent=self)
+        start = self.mv_start.get()
+        clash = [k for k, m in self.moves.items() if k != old and start != MANUAL and self._start_of(m) == start]
+        if clash:
+            return messagebox.showerror("Macro", f"'{clash[0]}' already starts with {start}. "
+                                                 "Pick another button or delete that macro.", parent=self)
+        prev = self.moves.pop(old, {}) if old else {}
+        kind, what = START[start]
+        m = {"repeat": REPEAT[self.mv_repeat.get()], "steps": steps}
+        if kind == "hold":
+            m.update(trigger=what, hotkey="", button=None)
+        else:
+            m.update(trigger="hotkey", hotkey=self._free_hotkey(prev.get("hotkey")),
+                     button=what if kind == "button" else None)
+        if prev.get("button") is not None and prev.get("button") != m["button"]:
+            self._release_button(prev)
+        self.moves[name] = m
+        self._write_moves()
+        self._fill_moves(name)
+        if kind == "button":
+            self.cfg.buttons[what] = P.Button(P.SHORTCUT, 0, HID_KEYS[m["hotkey"]])
+            self._refresh()
+            self.apply()
+            self.status.set(f"Saved. {P.X11_SLOTS[what]} now starts '{name}'")
+        else:
+            self.status.set(f"Saved '{name}'")
+        if not self.macros_on.get():
+            self.macros_on.set(True)
+            self._macros_switch()
+        else:
+            self._restart_listener()
+
+    # --- running
+    def _macros_switch(self):
+        self._set_app_setting("macros_on", self.macros_on.get())
+        self._toggle_listener()
+        self._explain_move()
+
+    def _restart_listener(self):
+        if self.macros_on.get():
+            self._toggle_listener()
+
+    def _toggle_listener(self):
         if self.listener:
             self.listener.stop()
             self.listener = None
-        if self.listen_var.get() or restart:
+        if self.macros_on.get():
             macros = list(self.moves.values())
-            self.listener = softmacro.Listener(macros, on_event=lambda s: self._post(self.status.set, s))
+            self.listener = softmacro.Listener(macros, on_event=lambda s: self._post(self.status.set, s), armed=True)
             self.listener.start()
-            names = [m["hotkey"] for m in macros if m.get("trigger", "hotkey") == "hotkey" and m.get("hotkey")]
-            names += [TRIGGER_NAMES[m["trigger"]] for m in macros if m.get("trigger") in softmacro.HOLD_TRIGGERS]
-            self.status.set("Listening: " + (", ".join(names) or "nothing")
-                            + ("  (Scroll Lock arms hold macros)" if self.listener.holds else ""))
+            self.status.set(f"Macros ON ({len(macros)} ready)")
+        else:
+            self.status.set("Macros OFF")
 
     # ------------------------------------------------------------ data
     def _refresh(self):
@@ -769,8 +889,7 @@ class App(tk.Tk):
             with open(MOVES, encoding="utf-8") as fh:
                 return json.load(fh)
         except (OSError, ValueError):
-            return {"Flick right": {"hotkey": "", "repeat": 1,
-                                    "steps": [{"move": [300, 0], "ms": 150}, {"click": "left"}]}}
+            return {}
 
     def _write_moves(self):
         with open(MOVES, "w", encoding="utf-8") as fh:

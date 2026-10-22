@@ -25,11 +25,17 @@ a stutter/dropout watchdog with automatic fixes.
 | Factory reset | Same reset command the official app sends |
 
 ### New features
-* **Movement macros.** Cursor moves, recorded paths, clicks, scrolling and keys, played by the PC.
-  * *Hotkey trigger:* bind any mouse button to F13–F24, and the macro runs when that button is pressed.
-  * *Hold trigger:* the pattern plays while a button (e.g. left click) is held and stops on release.
-    Hold macros only fire while **armed** (Scroll Lock toggles this), so normal clicking is unaffected.
-  * Record a pattern by simply holding the button and drawing it.
+* **Macros.** Cursor moves, recorded paths, clicks, scrolling and keys, played by the PC.
+  Making one takes four steps:
+  1. **+ New macro** and give it a name.
+  2. Choose what **starts** it: a side button, the DPI button or the wheel click
+     (press to play, press again to stop), or *hold left/right click* (plays while held).
+  3. Choose how it **plays**: once, *N* times, or in a loop until stopped.
+  4. **● Record** the pattern, then **💾 Save**.
+
+  The app sets up the mouse button by itself and switches macros on. Deleting a macro gives
+  the button back its normal function. The left button is never remapped, and Scroll Lock
+  briefly pauses hold macros.
 * **Battery.** Live percentage and charging state, a 24-hour chart and a CSV history. From that
   history it estimates drain rate, time remaining, time to full, charge cycles and wear. If you
   enter the rated capacity, it also estimates mAh remaining and average current.
