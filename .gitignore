@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+# personal data and logs
+profiles/
+captures/
+# disassembly listings and caches of the vendor binary
+re/*.asm
+re/*.pkl
