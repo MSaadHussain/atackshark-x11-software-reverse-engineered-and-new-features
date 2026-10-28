@@ -68,6 +68,9 @@ class App(tk.Tk):
         bar = ttk.Frame(self, padding=8)
         bar.pack(fill="x")
         self.status = tk.StringVar(value="Ready")
+        self.conn = tk.StringVar(value="Checking connection…")
+        self.conn_lbl = ttk.Label(bar, textvariable=self.conn, font=("Segoe UI", 9, "bold"))
+        self.conn_lbl.pack(side="left", padx=(0, 12))
         ttk.Label(bar, textvariable=self.status).pack(side="left")
         ttk.Button(bar, text="Apply to mouse", command=self.apply).pack(side="right")
         ttk.Button(bar, text="Factory reset mouse", command=self.factory_reset).pack(side="right", padx=4)
@@ -77,6 +80,7 @@ class App(tk.Tk):
         self.after(300, self._check_device)
         self.watchdog.start()
         self._health_tick()
+        self._conn_tick()
         self.bat_monitor = B.Monitor(self.bat_log, on_reading=lambda r: self._post(self._on_battery, r),
                                      on_status=lambda m: self._post(self.bat_state.set, m))
         self.bat_monitor.start()
@@ -929,7 +933,23 @@ class App(tk.Tk):
     def _check_device(self):
         from .device import find
         d = find()
-        self.status.set(f"Mouse connected ({d['mode']})" if d else "Mouse not found - plug in the dongle")
+        self.status.set("Ready" if d else "Mouse not found - plug in the dongle or the cable")
+
+    def _conn_tick(self):
+        """Refresh the connection label every 2 s (cable / dongle / not responding)."""
+        from .device import CONNECTION_LABELS, connection
+
+        def work():
+            mode = connection(self.watchdog.last_status)
+            self._post(self._show_conn, mode, CONNECTION_LABELS[mode])
+        threading.Thread(target=work, daemon=True).start()
+        self.after(2000, self._conn_tick)
+
+    def _show_conn(self, mode, label):
+        icon = {"wired": "🔌", "wireless": "📶", "dongle_only": "⚠", "none": "✖"}[mode]
+        short = {"dongle_only": "Dongle only - mouse not responding"}.get(mode, label)
+        self.conn.set(f"{icon} {short}")
+        self.conn_lbl.configure(foreground={"wired": "#1a7f37", "wireless": "#1a7f37"}.get(mode, "#b42318"))
 
     def apply(self):
         try:

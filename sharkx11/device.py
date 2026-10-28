@@ -13,7 +13,8 @@ from ctypes import wintypes
 import hid
 
 VID = 0x1D57
-PIDS = (0xFA60, 0xFA55)   # wireless dongle, wired cable
+WIRELESS, WIRED = 0xFA60, 0xFA55   # 2.4 GHz dongle, mouse on its USB cable
+PIDS = (WIRED, WIRELESS)            # with the cable in, the mouse talks over the cable
 
 _hid = ctypes.WinDLL("hid.dll")
 _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -58,14 +59,41 @@ def _feature_len(path: str) -> int:
 
 
 def find() -> dict | None:
-    """The vendor (feature-report) collection of the first connected X11."""
+    """The vendor (feature-report) collection of the X11, cable preferred over dongle."""
     for pid in PIDS:
         for d in hid.enumerate(VID, pid):
             path = d["path"].decode()
             if _feature_len(path) > 0:
                 return {"pid": pid, "path": path,
-                        "mode": "wireless" if pid == 0xFA60 else "wired"}
+                        "mode": "wireless" if pid == WIRELESS else "wired"}
     return None
+
+
+CONNECTION_LABELS = {
+    "wired": "Wired (USB cable)",
+    "wireless": "Wireless (2.4 GHz dongle)",
+    "dongle_only": "Dongle plugged in, mouse not responding (off, asleep or out of range)",
+    "none": "Not connected",
+}
+
+
+def connection(last_status: float | None = None, now: float | None = None) -> str:
+    """How the X11 is connected right now.
+
+    The mouse shows up as 1D57:FA55 while its cable is plugged into this PC; the
+    dongle (1D57:FA60) is only a link to the mouse, so on its own it proves
+    nothing. `last_status` is the time of the last dongle status report (they
+    arrive every ~2 s while the mouse is awake and in range).
+    """
+    present = {pid for pid in PIDS if hid.enumerate(VID, pid)}
+    if WIRED in present:
+        return "wired"
+    if WIRELESS in present:
+        now = now or time.time()
+        if last_status is None or now - last_status > 6:
+            return "dongle_only"
+        return "wireless"
+    return "none"
 
 
 class X11:
@@ -89,6 +117,9 @@ class X11:
         self.close()
 
     def send(self, report: bytes, retries: int = 5, gap: float = 0.2) -> bool:
+        report = bytearray(report)
+        if self.info["mode"] == "wired" and len(report) == 64 and report[:2] == b"\x09\x40" and report[3] == 2:
+            report[1] = 0x0C   # the cable path marks the last macro chunk differently (exe 0x4a1c3d)
         buf = ctypes.create_string_buffer(bytes(report), len(report))
         for _ in range(retries):
             ok = _hid.HidD_SetFeature(self.handle, buf, len(report))

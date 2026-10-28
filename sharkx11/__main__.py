@@ -47,9 +47,13 @@ def main(argv=None):
         from .gui import main as gui
         return gui()
     if args.cmd == "info":
-        from .device import find
+        from . import battery as B
+        from .device import CONNECTION_LABELS, connection, find
         d = find()
-        print(d if d else "Attack Shark X11 not found")
+        r = B.read_once(3) if d else None
+        print("Connection:", CONNECTION_LABELS[connection(r.t if r else None)])
+        if r:
+            print(f"Battery:    {r.percent}% - {r.state_name}")
         return 0 if d else 1
     if args.cmd == "apply":
         cfg = P.Config.from_json(open(args.file, encoding="utf-8").read())

@@ -130,8 +130,13 @@ def official_system_and_polling(cfg):
     return sent
 
 
-def official_transport(report: bytes):
-    """Run the send routine itself (dongle path) and capture each SetFeature call."""
+def official_transport(report: bytes, wired: bool = False):
+    """Run the send routine itself and capture each feature report it sends.
+
+    Dongle path: SetFeature from hiddriver. Cable path: hidapi's
+    hid_send_feature_report; the app repeats it until the mouse acks (flag 0x3f8),
+    so the ack is faked right after the first full send.
+    """
     FEAT, SLEEP = 0x200, 0x300
     captured = []
     uc = Uc(UC_ARCH_X86, UC_MODE_32)
@@ -140,15 +145,27 @@ def official_transport(report: bytes):
     uc.mem_map(0, 0x1000)
     uc.mem_map(STACK, STACK_SIZE)
     uc.mem_map(OBJ, 0x80000)
-    uc.mem_write(OBJ + 0x3DC, struct.pack("<I", 1))      # dongle opened
-    uc.mem_write(OBJ + 0x40, struct.pack("<I", FEAT))    # SetFeature pointer
+    if wired:
+        uc.mem_write(OBJ + 0x3EC, struct.pack("<I", 1))  # cable connected
+        uc.mem_write(0x4E4688, struct.pack("<I", FEAT))  # hid_send_feature_report import
+    else:
+        uc.mem_write(OBJ + 0x3DC, struct.pack("<I", 1))  # dongle opened
+        uc.mem_write(OBJ + 0x40, struct.pack("<I", FEAT))  # SetFeature pointer
     uc.mem_write(0x4E4444, struct.pack("<I", SLEEP))     # Sleep import
     buf = STACK + 0x1000
     uc.mem_write(buf, report.ljust(0x100, bytes(1)))
 
     def hook(uc, addr, size, _):
         esp = uc.reg_read(UC_X86_REG_ESP)
-        if addr == FEAT:                       # BOOL SetFeature(buf, len), stdcall
+        if addr == FEAT and wired:             # int hid_send_feature_report(dev, buf, len), stdcall
+            ret, _dev, b, n = struct.unpack("<IIII", uc.mem_read(esp, 16))
+            captured.append(bytes(uc.mem_read(b, n)))
+            if report[0] != 0x09 or len(captured) == 3:
+                uc.mem_write(OBJ + 0x3F8, struct.pack("<I", 1))   # mouse acknowledged
+            uc.reg_write(UC_X86_REG_EAX, n)
+            uc.reg_write(UC_X86_REG_ESP, esp + 16)
+            uc.reg_write(UC_X86_REG_EIP, ret)
+        elif addr == FEAT:                     # BOOL SetFeature(buf, len), stdcall
             ret, b, n = struct.unpack("<III", uc.mem_read(esp, 12))
             captured.append(bytes(uc.mem_read(b, n)))
             uc.reg_write(UC_X86_REG_EAX, 1)
@@ -174,6 +191,14 @@ def official_transport(report: bytes):
     uc.reg_write(UC_X86_REG_ECX, OBJ)
     uc.emu_start(SEND, STOP, count=2_000_000)
     return captured
+
+
+def wired_bytes(chunk: bytes) -> bytes:
+    """What sharkx11.device.X11.send puts on the cable for this report."""
+    b = bytearray(chunk)
+    if len(b) == 64 and b[:2] == b"\x09\x40" and b[3] == 2:
+        b[1] = 0x0C
+    return bytes(b)
 
 
 def configs():
@@ -209,6 +234,8 @@ def main():
         for r in [P.build_dpi(cfg)] + [P.build_macro(k, m) for k, m in cfg.macros.items()]:
             ours = P.split_macro(r) if r[0] == 0x09 else [r]
             checks.append((f"dongle transport of report {r[0]:#04x}", official_transport(r), ours))
+            wired = [wired_bytes(c) for c in ours]
+            checks.append((f"cable transport of report {r[0]:#04x}", official_transport(r, wired=True), wired))
         for what, theirs, ours in checks:
             ok = theirs == ours
             bad += not ok

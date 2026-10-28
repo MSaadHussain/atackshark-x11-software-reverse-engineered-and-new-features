@@ -27,11 +27,11 @@ import winreg
 from ctypes import wintypes
 from dataclasses import dataclass
 
-from .device import PIDS, VID
+from .device import PIDS, VID, WIRELESS
 
 USB_SUBGROUP = "2a737441-1930-4402-8d77-b2bebba308a3"
 USB_SUSPEND = "48e6b7a6-50f5-4782-a5d4-53bb8f07e226"
-DEV_KEY = f"VID_{VID:04X}&PID_{PIDS[0]:04X}"
+DEV_KEY = f"VID_{VID:04X}&PID_{WIRELESS:04X}"   # the dongle
 
 HITCH_MIN_MS = 25        # gap inside fast motion that a human would feel
 FREEZE_MIN_MS = 100

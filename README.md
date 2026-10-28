@@ -41,6 +41,10 @@ a stutter/dropout watchdog with automatic fixes.
   enter the rated capacity, it also estimates mAh remaining and average current.
   The mouse itself reports only percentage and charging state, so the other values are
   clearly marked as estimates.
+* **Connection status.** The window always shows whether the mouse is on its USB cable or
+  the 2.4 GHz dongle, or whether the dongle is plugged in with the mouse off, asleep or out of
+  range. With the cable in, settings and battery go over the cable. Both paths are verified
+  against the vendor code.
 * **Health watchdog.**
   * Uses Windows Raw Input to time every movement report from the mouse.
   * Detects stutters (hitches), freezes and wireless dropouts, and logs them.
